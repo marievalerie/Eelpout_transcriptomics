@@ -3,57 +3,50 @@ configfile: "config.yaml"
 
 rule all:
     input:
-        #expand("../trimmed/{sample}_1_polyx_trimmed_val_1.fq", sample=config["samples"])
-        #expand("genome_guided_transcripts/{sample}.gtf", sample=config["samples"])        
-        #expand("../genome_guided_expression/{sample}.tsv", sample=config["samples"]),
-        #expand("mapping_results/{sample}_aligned_reads.1.fq.gz", sample=config["samples"])
+        #expand("../trimmed/{sample}_1_polyx_trimmed_val_1.fq", sample=config["samples"]) ##run until here and then concatenate files
         expand("../genome_guided_expression_gff_as_ref/{sample}/{sample}.tsv", sample=config["samples"])
 
+rule unzip_fwd:
+    input:
+        "../raw_data/{sample}_1.fq.gz"
+    output:
+        temp("../trimmed/{sample}_1.fq")
+    shell:
+        "gunzip -c {input} > {output}"
 
-
-#rule unzip_fwd:
-#    input:
-#        "../raw_data/{sample}_1.fq.gz"
-#    output:
-#        temp("../trimmed/{sample}_1.fq")
-#    shell:
-#        "gunzip -c {input} > {output}"
-
-#rule unzip_rev:
-#    input:
-#        "../raw_data/{sample}_2.fq.gz"
-#    output:
-#        temp("../trimmed/{sample}_2.fq")
-#    shell:
-#        "gunzip -c {input} > {output}"
+rule unzip_rev:
+    input:
+        "../raw_data/{sample}_2.fq.gz"
+    output:
+        temp("../trimmed/{sample}_2.fq")
+    shell:
+        "gunzip -c {input} > {output}"
         
-#rule trim_poly_X:
-#    input:
-#        fwd = "../trimmed/{sample}_1.fq",
-#        rev = "../trimmed/{sample}_2.fq"
-#    output:
-#        trmd1 = temp("../trimmed/{sample}_1_polyx_trimmed.fastq"),
-#        trmd2 = temp("../trimmed/{sample}_2_polyx_trimmed.fastq"),
-#        single1 = temp("../trimmed/{sample}_1_singletons.fastq"),
-#        single2 = temp("../trimmed/{sample}_2_singletons.fastq")
-#    shell:
-#        "/home/mbrasseur/bin/fastx-trim-filter-polyX-v0.3-dist/fastx-trim-filter-polyX-v0.3 --remove_mono_repeat_reads 0 --in1 {input.fwd} --in2 {input.rev} --out1 {output.trmd1} --out2 {output.trmd2} --single_out1 {output.single1} --single_out2 {output.single2} --symbol_list 'GCTA' -m 25 -s 20 -t 10"
+rule trim_poly_X:
+    input:
+        fwd = "../trimmed/{sample}_1.fq",
+        rev = "../trimmed/{sample}_2.fq"
+    output:
+        trmd1 = temp("../trimmed/{sample}_1_polyx_trimmed.fastq"),
+        trmd2 = temp("../trimmed/{sample}_2_polyx_trimmed.fastq"),
+        single1 = temp("../trimmed/{sample}_1_singletons.fastq"),
+        single2 = temp("../trimmed/{sample}_2_singletons.fastq")
+    shell:
+        "/home/mbrasseur/bin/fastx-trim-filter-polyX-v0.3-dist/fastx-trim-filter-polyX-v0.3 --remove_mono_repeat_reads 0 --in1 {input.fwd} --in2 {input.rev} --out1 {output.trmd1} --out2 {output.trmd2} --single_out1 {output.single1} --single_out2 {output.single2} --symbol_list 'GCTA' -m 25 -s 20 -t 10"
 
-#rule TrimGalore:
-#    input:
-#        "../trimmed/{sample}_1_polyx_trimmed.fastq",
-#        "../trimmed/{sample}_2_polyx_trimmed.fastq"
-#    output:
-#        "../trimmed/{sample}_1_polyx_trimmed_val_1.fq",
-#        "../trimmed/{sample}_2_polyx_trimmed_val_2.fq"
-#    threads:
-#        4
-#    shell:
-#        "perl ~/bin/TrimGalore-0.6.6/trim_galore --paired --quality 20 --phred33 --length 25 -j {threads} --stringency 1 --output_dir ../trimmed/ {input}"
+rule TrimGalore:
+    input:
+        "../trimmed/{sample}_1_polyx_trimmed.fastq",
+        "../trimmed/{sample}_2_polyx_trimmed.fastq"
+    output:
+        "../trimmed/{sample}_1_polyx_trimmed_val_1.fq",
+        "../trimmed/{sample}_2_polyx_trimmed_val_2.fq"
+    threads:
+        4
+    shell:
+        "perl ~/bin/TrimGalore-0.6.6/trim_galore --paired --quality 20 --phred33 --length 25 -j {threads} --stringency 1 --output_dir ../trimmed/ {input}"
 
-##run script to concatenate samples
-
-##indexing ## 
+##########run script to concatenate samples##########
 
 rule extract_splicesites:
     input:
@@ -127,26 +120,7 @@ rule sort_samtobam:
     shell:
         "samtools sort -m 10G -o {output} --threads {threads} {input}"
 
-###only estimate expression based on the annotation that you have###
-
-rule stringtie_expression_2:
-    input:
-        reads = "mapping_results/{sample}_sorted.bam",
-        reference = "../reference/Zoavi_1_2_softmasked_nuc+Mit2.gff" ##the annotation incl. the mitogenome features as gff
-    output:
-        "../genome_guided_expression_gff_as_ref/{sample}.tsv"
-    threads:
-        10
-    shell:
-        "stringtie -e -o {output} -p {threads} -G {input.reference} {input.reads}"
-        
-#rule prepDE: ##better use tximport due to some strange behaviour with prepDE
-#    input:
-#        "../genome_guided_expression/samples_lst.txt"
-#    output:
-#        "../genome_guided_expression/gene_count_matrix.csv"
-#    shell:
-#        "prepDE.py -i {input} -l 150"
+###only estimate expression based on the annotation that you have###        
 
 rule stringtie_ballgown:
     input:
