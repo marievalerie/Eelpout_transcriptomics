@@ -1,7 +1,6 @@
 ###WGCNA
 library("DESeq2")
 library('sva')
-#BioNERO package?
 library('WGCNA')  
 library('tximport')
 library('readr')
@@ -9,16 +8,16 @@ library('PCAtools')
 library('tidyr')
 library('stringr')
 
-##perform with data_adj (which is SVA corrected and variance stabilized)?? -> WGCNA at least suggets to remove batch effects
-##accordign to https://support.bioconductor.org/p/42615/ a frozen sva wiould to the job
+#perform the WGCNA based on dcount data that is batch effect adjusted, if one exist i.e., SVA corrected and variance stabilized counts
+#accordign to https://support.bioconductor.org/p/42615/ a frozen sva wiould to the job
 
-##setup
+#setup
 allowWGCNAThreads(30)
 temp_cor <- cor       
 cor <- WGCNA::cor # Force it to use WGCNA cor function (fix a namespace conflict issue)
 options(stringsAsFactors = FALSE)
 
-###load data with tximport
+#load data with tximport
 #set to ballgown coverage data dir
 setwd('../genome_guided_expression_gff_as_ref/')
 files = c(read.table('samples_lst.txt')) ##file with .ctab file names
@@ -26,12 +25,8 @@ files_names <- c(files$V1)
 files <- c(files$V2)
 names(files) <- files_names
 
-#create tx2gene file
-a <- read_tsv(files[1]) ##somehow does not work when I want to store it in temp :/
-tx2gene <- a[, c("t_name", "gene_id")]
-
-#thisdoes not contain mitogenes
-#tx2gene <- read.table('/share/pool/mbrasseur/eelpout_RNA_timeseries/reference/zoarces_tx2gene')
+#load tx2gene file
+tx2gene <- read.table('/share/pool/mbrasseur/eelpout_RNA_timeseries/reference/zoarces_tx2gene')
 
 #read in tx abundances; for timeseries -> 150 bp
 txi.stringtie <- tximport(files, type = "stringtie", tx2gene = tx2gene, readLength = 150)
@@ -39,7 +34,7 @@ txi.stringtie <- tximport(files, type = "stringtie", tx2gene = tx2gene, readLeng
 #change to analysis dir
 setwd('/share/pool/mbrasseur/eelpout_RNA_timeseries/WGCNA')
 
-##load metadata
+#load metadata
 sampleData <- read.csv('../DESeq/timeseries_metadata.csv', sep = ';', header = 1)
 row.names(sampleData) <- sampleData$Sample
 sampleData <- sampleData[colnames(txi.stringtie$counts),]
@@ -49,79 +44,59 @@ levels(sampleData$Year) ##check the levels -> control must come first
 
 sampleData$Location <- factor(sampleData$Location, levels = c("Dar", "Mel", "VaM"))
 
-##check; if TRUE, proceed
+#check; if TRUE, proceed
 all(colnames(txi.stringtie$counts) == rownames(sampleData)) 
 
 #create DESeq object
-dds1 <- DESeqDataSetFromTximport(txi.stringtie, colData=sampleData, design= ~ Location + Year) ##could make sense to fit time as numerical predictor an the add interaction term 
+dds1 <- DESeqDataSetFromTximport(txi.stringtie, colData=sampleData, design= ~ Location + Year) 
 
+#remove mitochondrial tRNAs and rRNAs
 dds1 <- dds1[setdiff(rownames(dds1), '.'),]
 
-
-##some filtering steps; omit this for now
+#some filtering steps & DESeq normalization
 dds1 <- estimateSizeFactors(dds1)
 nc <- counts(dds1, normalized=TRUE)
 
 filter2 <- rowSums(nc >= 3) >= 8 
 dds1 <- dds1[filter2,]
+dds1 <- DESeq(dds1, test="LRT", reduced = ~ Location) 
 
-##how many genes
-length(row.names(counts(dds1))) ## 20041 genes
-
-
-##run DESeq() on the complete data set and use the LRT
-dds1 <- DESeq(dds1, test="LRT", reduced = ~ Location) ##this will test if all time factor levels significantly contribute to the likelihood of the mdodel
-
-##correct for batch effect
+####correct for batch effect
 dat  <- counts(dds1, normalized = TRUE)
 
-##estimate latent factors i.e., surrogates
+#estimate latent factors i.e., surrogates
 mod  <- model.matrix(~ Location + Year, colData(dds1)) ##specify full model
 mod0 <- model.matrix(~   1, colData(dds1)) ##specify reduced model
 
-##run sva
+#run sva
 svseq <- svaseq(dat, mod, mod0) ##note down here the number of surrogates; 4
 
-
-##frozen SVA to regress out latent factors in the PCA
+#frozen SVA to regress out latent factors
 newV = NULL ## neccessary due to bug in the sva pacakge
 dat_vst  <- vst(dds1, blind=FALSE)
 
 #run frozen sva
 fsvaobj <- fsva(assay(dat_vst), mod, svseq, method = 'exact') 
 
-##get the adjusted data
+#get the adjusted data as matrix and use this in WGCNA
 mat <- fsvaobj$db
 head(mat)
-##outlier genes and samples need to be removed -> different ways to identify these
-##identify outlier genes with WGCAN function
 
 
-##rows must be samples and cols must be genes
+####WGCNA
+#outlier genes and samples need to be removed -> different ways to identify these
+#identify outlier genes with WGCAN function
+
+#rows must be samples and cols must be genes
 mat <- t(mat)
 
-##check if there are too many missing values
+#check if there are too many missing values
 gsg <- goodSamplesGenes(mat)
 summary(gsg)
-gsg$allOK ##if TRUE, then proceed
-
-##if FALSE, then you need to filter out outliers
-if (!gsg$allOK)
-{
-  if (sum(!gsg$goodGenes)>0) 
-    printFlush(paste("Removing genes:", paste(names(mat)[!gsg$goodGenes], collapse = ", "))); #Identifies and prints outlier genes
-  if (sum(!gsg$goodSamples)>0)
-    printFlush(paste("Removing samples:", paste(rownames(mat)[!gsg$goodSamples], collapse = ", "))); #Identifies and prints oulier samples
-  mat <- mat[gsg$goodSamples == TRUE, gsg$goodGenes == TRUE] # Removes the offending genes and samples from the data
-}
-
-##evaluate again
-gsg <- goodSamplesGenes(mat)
-summary(gsg)
-gsg$allOK 
+gsg$allOK #if TRUE, proceed
 
 
-##remove outlier samples based on hierarchical clustering
+#remove outlier samples based on hierarchical clustering
 sampleTree <- hclust(dist(mat, method = 'can'), method = "average") #Clustering samples based on distance 
 
 #Setting the graphical parameters
@@ -134,29 +109,13 @@ plot(sampleTree, main = "Sample clustering to detect outliers", sub="", xlab="",
      cex.axis = 1.5, cex.main = 2)
 dev.off()
 
-##if outliers are identified, they might be removed with a cutree function 
-#cutoff_value <- 72         ##this must be adjusted depending on the tree 
 
-#plot(sampleTree, main = "Sample clustering to detect outliers", sub="", xlab="", cex.lab = 1.5,
-#     cex.axis = 1.5, cex.main = 2)
-#draw on line to show cutoff height
-#abline(h = cutoff_value, col = "red")
-
-
-##cutoff
-#cut.sampleTree <- cutreeStatic(sampleTree, cutHeight = cutoff_value, minSize = 10) #returns numeric vector; Only branches whose size is at least minSize are retained
-#Remove outlier
-#mat <- mat[cut.sampleTree==1, ] we do not remove any outlier here because there are none
-
-
-####network construction, 
-###the first step is always to determine the power (?)
-
-?pickSoftThreshold
+####Network construction, 
+#1. determine the power
 
 spt <- pickSoftThreshold(mat, networkType = "signed", powerVector = seq(1, 40, by = 2), RsquaredCut = 0.85)
 
-##plot R2 values as a function of the soft thresholds
+#plot R2 values as a function of the soft thresholds
 par(mar=c(1,1,1,1))
 png('r2_vs_power.png')
 plot(spt$fitIndices[,1],spt$fitIndices[,2],
@@ -166,8 +125,8 @@ text(spt$fitIndices[,1],spt$fitIndices[,2],col="red")
 abline(h=0.85,col="red")
 dev.off()
 
-##the best soft power threshold is the one which maximizes R2 (R^2 >=85 (or 80)??)
-#and mean connectivity/minimizing the number of connections lost -> here 10
+#the best soft power threshold is the one which maximizes R2 
+#and minimizes the number of connections lost 
 
 #Plot mean connectivity as a function of soft thresholds
 par(mar=c(1,1,1,1))
@@ -179,47 +138,23 @@ text(spt$fitIndices[,1], spt$fitIndices[,5], labels= spt$fitIndices[,1],col="red
 dev.off()
 
 
-##NOTE: the higher the value, the stronger the connection strength 
+#NOTE: the higher the value, the stronger the connection strength 
 #of highly correlated gene expression profiles -> the more devalued are low correlations
 
 softPower <- 9
 
-
-
-###the following code describes the MANUAL step-by-step network construction; adapted from: https://fuzzyatelin.github.io/bioanth-stats/module-F21-Group1/module-F21-Group1.html
-
-#1st step: identify some sort of similarity measurement between pairs of genes. -> similarity measurement represents the concordance of gene expression profiles across samples. 
-#In WGCNA the similarity measurement for each pair of genes (gene i and gene j) is denoted by their Pearson correlation coefficient.
-#for unsigned networks, you take the absolute value of the correlation, but signed networks are more common & biological interpretation is more straightforward
-
-
-#2nd step: translate similarity measurement into the gene pairs adjacency to generate an adjacency matrix.
-#Adjacency = assignment of a connection strength based on the co-expression similarity measurement (i.e. Pearson correlation coefficient). 
-#Nodes are considered connected if they have a significant pairwise correlation association.
-
-##adjacency calculation depends on the choice for unweighted vs weighted network 
-#(unweighted networks are binary, whereas weighted networks can depict gradients in association
-#weighted networks utilize a power function based on a soft threshold parameter ? which must be determined (determines the sensitivity and specificity of the analysis)
-
-
-##create adjacency matrix for module construction 
-?adjacency
+####create adjacency matrix for module construction 
 adjacency <- adjacency(mat, power = softPower, type = "signed", distOptions = "method = 'canberra'")
 
-##module construction;to assess topological overlap, adjacency must be transformed to dissimilarity;
+###module construction;to assess topological overlap, adjacency must be transformed to dissimilarity;
 #use TOM-based dissimilarity (topological overlap matrix)
-?TOMsimilarity
+
 TOM <- TOMsimilarity(adjacency, TOMType = "signed", verbose = 2) #this gives similarity
 TOM.dissimilarity <- 1-TOM #this gives dissimilarity
 
-###this dissimilarity can be used for gene clustering/finding modules = group of gene profiles that are highly correlated or have a high topological overlap.
-##hierarchical clustering analysis
-
-#The dissimilarity/distance measures are clustered and 
-#a dendrogram (cluster tree) of genes is constructed.
-
+#clustering
 geneTree <- hclust(as.dist(TOM.dissimilarity), method = "average") 
-#plot dendrogram
+plot dendrogram
 sizeGrWindow(12,9)
 png('genes_clustered_based_on_TOM.png')
 plot(geneTree, xlab="", sub="", main = "Gene clustering on TOM-based dissimilarity", 
@@ -227,12 +162,9 @@ plot(geneTree, xlab="", sub="", main = "Gene clustering on TOM-based dissimilari
 dev.off()
 
 
-###identify modules
+#identify modules
 Modules <- cutreeDynamic(dendro = geneTree, distM = TOM.dissimilarity, minClusterSize = 30, deepSplit=2)
-
-#?cutreeDynamic ###params??
-
-table(Modules) #returns a table of the counts of factor levels in an object.here: no. of genes assigned to each created module, whereby 0 is reserved for genes which do not fit into any module 
+table(Modules) 
 
 #plot module assignment under gene dendro
 ModuleColors <- labels2colors(Modules) #assigns each module number a color
@@ -246,30 +178,31 @@ dev.off()
 
 
 
-###visualize the topological overlap of the network 
+####visualize the topological overlap of the network 
 #apply a power for visualization 
 plotTOM = TOM.dissimilarity^7
-# Set diagonal to NA for a nicer plot
+
+#set diagonal to NA for a nicer plot
 diag(plotTOM) = NA
-# Call the plot function but reverse the colormapping
+
+#call the plot function but reverse the colormapping
 library(gplots)
-#library(devEMF)
-
 myheatcol = colorpanel(250,'red',"orange",'lemonchiffon')
-
-#options(expressions = 50000)
 
 png('TOMplot.png', width = 7, height = 7, units = 'cm', res = 300)
 TOMplot(plotTOM, geneTree, ModuleColors, main = "", col=myheatcol)
 dev.off()
 
 
-##identify eigengenes; 
+####Identify eigengenes; 
 MElist <- moduleEigengenes(mat, colors = ModuleColors) 
 MEs <- MElist$eigengenes 
 head(MEs)
 
-#####module clustering based on eigengene similarity
+
+####################################
+
+####module clustering based on eigengene similarity
 #first: define distance between eigengenes
 ME.dissimilarity = 1-cor(MEs)
 
@@ -310,44 +243,39 @@ barplot(table(ModuleColors), las=2,cex.names = 0.8, main = "Number of genes per 
 dev.off()
 
 ###leave it unmerged since module merging does not really change anything
+###################
 
 
-###perform correlation analyses
-##first: biometric parameters i.e., average weight & body length
 
-##check if the biometric data are normally distributed
+
+
+####correlation between module eigengenes and external traits
+#biometric parameters i.e., average weight & body length & environmental data
+
+#check if the biometric data are normally distributed
 setwd('C:/Users/mbras/Desktop/UPB - poolseq time line/')
 biometrics <- read.csv('Eelpout_metadata_biometrics_and_time.csv', sep = ';')
 
-colnames(biometrics)
-##make Q-Q-plots
+#make Q-Q-plots
 qqnorm(biometrics$Aalmutter.Gewicht.DAR)
 qqline(biometrics$Aalmutter.Gewicht.DAR)
-##test formally
-shapiro.test(biometrics$Aalmutter.Gesamtl?nge.DAR)
-
-##acc. to shapiro test, these two fail to be normally distributed
-#Aalmutter.Gesamtl?nge.DAR
-#Aalmutter.Gewicht.DAR
+#test formally
+shapiro.test(biometrics$Aalmutter.Gesamtlänge.DAR)
 
 
-
-##plot with ggplot
+#plot with ggplot
 library('ggplot2')
 library('plyr')
 library('gridExtra')
 
 #transform to longformat
-
 biometrics.long <- biometrics[,c(1:4, 8:14)]
 
 biometrics.long <- gather(biometrics.long, biometric, value, EXACT_predicted_water_temp_at_sea_floor:Average_body_length)
 
 class(biometrics.long$value)
-
 unique(biometrics.long$biometric)
 
-###biometrics
 
 p0 <- ggplot(biometrics.long[biometrics.long$biometric == 'Average_body_length', ], aes(x=Year, y=value )) +
   geom_line(aes(color = Sampling_site), show.legend = T) +
@@ -358,7 +286,6 @@ p0 <- ggplot(biometrics.long[biometrics.long$biometric == 'Average_body_length',
   ylab('Average body length [cm]')
 ylim(0,max(biometrics.long[biometrics.long$biometric == 'Average_body_length', ]$value))
 
-p0
 
 p1 <- ggplot(biometrics.long[biometrics.long$biometric == 'Average_body_length', ], aes(x=Year, y=value )) +
   geom_line(aes(color = Sampling_site), show.legend = F) +
@@ -369,7 +296,6 @@ p1 <- ggplot(biometrics.long[biometrics.long$biometric == 'Average_body_length',
   ylab('Average body length [cm]')
   ylim(0,max(biometrics.long[biometrics.long$biometric == 'Average_body_length', ]$value))
 
-p1 
 
 p2 <- ggplot(biometrics.long[biometrics.long$biometric == 'Average_body_weight', ], aes(x=Year, y=value )) +
   geom_line(aes(color = Sampling_site), show.legend = F) +
@@ -380,8 +306,6 @@ p2 <- ggplot(biometrics.long[biometrics.long$biometric == 'Average_body_weight',
   ylab('Average body weight [g]')+
   ylim(0,max(biometrics.long[biometrics.long$biometric == 'Average_body_weight', ]$value))
 
-p2
-
 p3 <- ggplot(biometrics.long[biometrics.long$biometric == 'Average_liver_weight', ], aes(x=Year, y=value )) +
   geom_line(aes(color = Sampling_site), show.legend = F) +
   scale_color_manual(values = c('purple', 'darkgreen', 'darkorange')) +
@@ -391,14 +315,14 @@ p3 <- ggplot(biometrics.long[biometrics.long$biometric == 'Average_liver_weight'
   ylab('Average liver weight [g]')+
   ylim(0,max(biometrics.long[biometrics.long$biometric == 'Average_liver_weight', ]$value))
 
-p3
-
-
 pdf("biometrics.pdf", width = 9, height = 7)
 grid.arrange(p1, p2, p3, p0, ncol=2)
 dev.off()
 
-####env data
+
+
+
+####environmental data
 
 p4 <- ggplot(biometrics.long[biometrics.long$biometric == 'EXACT_predicted_water_temp_at_sea_floor', ], aes(x=Year, y=value )) +
   geom_line(aes(color = Sampling_site), show.legend = T) +
@@ -409,9 +333,6 @@ p4 <- ggplot(biometrics.long[biometrics.long$biometric == 'EXACT_predicted_water
   theme(axis.text.x = element_text(angle = 65, vjust = 1, hjust=1)) +
   ylab('Exact temperature [°C]')+
   ylim(0,max(biometrics.long[biometrics.long$biometric == 'EXACT_predicted_water_temp_at_sea_floor', ]$value))
-
-p4
-
 
 
 p5 <- ggplot(biometrics.long[biometrics.long$biometric == 'MEDIAN_predicted_water_temp_at_sea_floor', ], aes(x=Year, y=value)) +
@@ -424,9 +345,6 @@ p5 <- ggplot(biometrics.long[biometrics.long$biometric == 'MEDIAN_predicted_wate
   labs(title = 'Predicted water temp. at sea floor')+
   ylim(0,max(biometrics.long[biometrics.long$biometric == 'MEDIAN_predicted_water_temp_at_sea_floor', ]$value))
 
-p5
-
-
 
 p6 <- ggplot(biometrics.long[biometrics.long$biometric == 'MAX_predicted_water_temp_at_sea_floor', ], aes(x=Year, y=value)) +
   geom_line(aes(color = Marine_region), show.legend = T) +
@@ -437,8 +355,6 @@ p6 <- ggplot(biometrics.long[biometrics.long$biometric == 'MAX_predicted_water_t
   ylab('Max. temperature [°C]')+
   labs(title = 'Predicted water temp. at sea floor')+
   ylim(0,max(biometrics.long[biometrics.long$biometric == 'MAX_predicted_water_temp_at_sea_floor', ]$value))
-
-p6
 
 
 p7 <- ggplot(biometrics.long[biometrics.long$biometric == 'MIN_predicted_water_temp_at_sea_floor', ], aes(x=Year, y=value)) +
@@ -451,8 +367,6 @@ p7 <- ggplot(biometrics.long[biometrics.long$biometric == 'MIN_predicted_water_t
   labs(title = 'Predicted water temp. at sea floor')+
   ylim(0,max(biometrics.long[biometrics.long$biometric == 'MIN_predicted_water_temp_at_sea_floor', ]$value))
 
-p7
-
 
 pdf("env_data.pdf")
 grid.arrange(p4, p5, p6, p7, ncol=2)
@@ -460,36 +374,29 @@ dev.off()
 
 
 
-
-##load on cluster
+#####correlate the traits
+#load on cluster
 allTraits <- read.csv("Eelpout_metadata_biometrics_and_time.csv", sep = ';')
 
-##match trait data the expression data by sample ID, which must be also rownames
+#match trait data the expression data by sample ID, which must be also rownames
 row.names(allTraits) <- allTraits$ID
 allTraits <- allTraits[row.names(mat),]
 
-colnames(allTraits)
-
-##subset to env data
+#subset to env data
 envTraits <- allTraits[, c(1, 8:14)]
 envTraits$Year <- envTraits$Year - 1994
 
-# Define numbers of genes and samples
+#define numbers of genes and samples
 nGenes = ncol(mat)
 nSamples = nrow(mat) ##this must be adjusted for biometric data
-
-
-##calculate eigengene gene significance
-##if we want to use unmerged MEs, then use the object MEs
 
 #make sure that the right cor function is used here! 
 module.trait.correlation.env = cor(MEs, envTraits, method = "pearson") 
 module.trait.Pvalue.env = corPvalueStudent(module.trait.correlation.env, nSamples) #calculate the p-value associated with the correlation
 
-
 module.trait.Pvalue.env.adj <- module.trait.Pvalue.env
 
-'''diese reihenfolge:
+'''
 [1] "Year"                                    
 [2] "EXACT_predicted_water_temp_at_sea_floor" 
 [3] "MEDIAN_predicted_water_temp_at_sea_floor"
@@ -500,7 +407,6 @@ module.trait.Pvalue.env.adj <- module.trait.Pvalue.env
 [8] "Average_body_length" '''
 
 
-
 module.trait.Pvalue.env.adj[,1] <- p.adjust(module.trait.Pvalue.env, method = "BH")[1:23] #23 MEs
 module.trait.Pvalue.env.adj[,2] <- p.adjust(module.trait.Pvalue.env, method = "BH")[24:46]
 module.trait.Pvalue.env.adj[,3] <- p.adjust(module.trait.Pvalue.env, method = "BH")[47:69]
@@ -509,7 +415,6 @@ module.trait.Pvalue.env.adj[,5] <- p.adjust(module.trait.Pvalue.env, method = "B
 module.trait.Pvalue.env.adj[,6] <- p.adjust(module.trait.Pvalue.env, method = "BH")[116:138]
 module.trait.Pvalue.env.adj[,7] <- p.adjust(module.trait.Pvalue.env, method = "BH")[139:161]
 module.trait.Pvalue.env.adj[,8] <- p.adjust(module.trait.Pvalue.env, method = "BH")[162:184]
-
 
 
 module.trait.Pvalue.env.adj <- as.data.frame(module.trait.Pvalue.env.adj)
@@ -538,16 +443,14 @@ module.trait.Pvalue.env.adj$Average_body_length[module.trait.Pvalue.env.adj$Aver
 
 #module.trait.Pvalue.env.adj <- na.omit(module.trait.Pvalue.env.adj)
 
-
-
-# Will display correlations and their p-values; input must be matrix not dataframe
+#display correlations and their p-values; input must be matrix (no df)
 textMatrix = paste(signif(as.matrix(module.trait.correlation.env), 2), "\n(",
                    signif(as.matrix(module.trait.Pvalue.env.adj), 1), ")", sep = "")
 
 dim(textMatrix) = dim(module.trait.correlation.env)
 
 
-# Display the correlation values within a heatmap plot
+#display the correlation values within a heatmap plot
 pdf('module_trait_pearson_correlation_adjusted_p.pdf', height = 7, width = 7)
 labeledHeatmap(Matrix = module.trait.correlation.env,
                xLabels = c("Year", "Exact temp.","Median seasonal temp.", "Max. seasonal temp.", "Min. seasonal temp.", "Average body weight", "Average liverweight", "Average body length"),
@@ -565,26 +468,19 @@ labeledHeatmap(Matrix = module.trait.correlation.env,
                main = paste("Module-trait relationships"))
 dev.off()
 
-
-table(ModuleColors)
-
 cor <- temp_cor     # Return cor function to original namespace
 
 
-
-#####plot expression profiles & eigengenes
+####plot expression profiles & eigengenes
 
 lvls =  c( "Dar_94", "Dar_99", "Dar_05", "Dar_10", "Dar_12", "Dar_17", "Dar_19", "Dar_21",
            "Mel_94", "Mel_99", "Mel_05", "Mel_10", "Mel_12", "Mel_17", "Mel_19", "Mel_21", 
            "VaM_94", "VaM_99", "VaM_05", "VaM_10", "VaM_12", "VaM_17", "VaM_19", "VaM_21")
 
-
-###all MEs 
 ME.plot <- MEs
 ME.plot$name <- factor(row.names(ME.plot), levels = lvls)
 
-
-##transform to long format with tidyr
+#transform to long format with tidyr
 ME.plot.long <- gather(ME.plot, module, expression, MEblack:MEyellow)
 
 pdf('MEs_expression_profiles_all.pdf')
@@ -600,7 +496,19 @@ dev.off()
 
 
 
-###all MEs that had a sig. correlation to any of the tested traits
+
+
+
+
+
+
+
+
+
+
+
+
+#all MEs that had a sig. correlation to any of the tested traits
 ME.sub <- MEs[, -c(9,10,18,20)] ##removal of grey, grey60, red, salmon
 ME.sub$name <- factor(row.names(ME.sub), levels = lvls)
 
