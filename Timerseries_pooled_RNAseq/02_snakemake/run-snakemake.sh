@@ -15,4 +15,4 @@ module load opt-python
 a=1; b=$NSLOTS
 THREADS=$((b-a))
 
-snakemake --cores ${THREADS} --snakefile Snakefile_hisat_mapping
+snakemake --cores ${THREADS} 
