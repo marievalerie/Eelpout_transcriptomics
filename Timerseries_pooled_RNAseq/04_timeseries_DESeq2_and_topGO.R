@@ -70,7 +70,7 @@ length(row.names(counts(dds1))) ## 20041 genes
 
 
 ####run DESeq() on the complete data set and use the LRT to test for the effect of time
-dds1 <- DESeq(dds1, test="LRT", reduced = ~ Location) ##this will test if all time factor levels significantly contribute to the likelihood of the mdodel
+dds1 <- DESeq(dds1, test="LRT", reduced = ~ Location) ##this will test if all time factor levels significantly contribute to the likelihood of the model
 
 
 #check dispersion
@@ -85,7 +85,7 @@ shps = c(19,15)
 #apply variance stabilzation on count data for PCA
 vsd <- vst(dds1)
 
-####PCA on adjusted counts
+####PCA on unadjusted counts
 p <- pca(assay(vsd), metadata = colData(dds1))
 
 pdf('PCA.pdf', height = 7, width = 5)
@@ -94,8 +94,6 @@ biplot(p, legendPosition = 'bottom', colby = 'Location', colkey = cols, shape = 
        xlab = paste0("PC1", ", ", round(p$variance["PC1"], digits = 2), "% variance"),
        ylab = paste0("PC2", ", ", round(p$variance["PC2"], digits = 2), "% variance")) 
 dev.off()
-
-
 
 
 ####PCA reveals batch effect -> control for it
@@ -130,6 +128,135 @@ biplot(p, legendPosition = 'bottom', colby = 'Location', colkey = cols,
        ylab = paste0("PC2", ", ", round(p$variance["PC2"], digits = 2), "% variance")) 
 dev.off()
 
+
+#looks reasonable; use the adjusted counts for clustering/pca etc., but still the unadjusted for modelling. here, add the svs to the model
+
+#####################################
+#1. check, how the heat responsive genes behave in the timeseries data
+#####################################
+
+#load the data
+heatstress <- read.csv('../../eelpout_RNA_heatstress_experiment/DESeq/DEG_zoarces_heatstress_exp.csv', row.names = 1)
+
+#extract heat stress responsive genes
+heatstress$padj[is.na(heatstress$padj)] <- 1
+heatstress <- heatstress[heatstress$padj < 0.05,]
+heatstress <- row.names(heatstress)
+
+heatstress <- intersect(heatstress, row.names(data_adj)) ##2440 genes
+
+#get the adjusted vst counts
+vsd_heatstress <- data_adj[heatstress,]
+
+#preliminary clustering
+pdf('heatstress_clusters_in_timeseries_data.pdf')
+cluster <- degPatterns(vsd_heatstress, sampleData, time = "Year", col = 'Marine_region', minc = 20)
+dev.off()
+
+#get the data for nicer plot                                      
+clustering_data <- cluster[["normalized"]]
+clustering_data  %>% count(cluster) 
+
+'''
+   cluster    n
+1        2  464
+2        3 1744
+3        4 1120
+4        5 2176
+5        6  464
+6        9 1392
+7       10  640
+8       11 1792
+9       12  384
+10      15 1216
+11      19  368
+12      20  688
+13      22  672
+14      23  512
+15      24  384
+16      25  784
+17      26 1088
+18      29  576
+19      31  336
+20      32  784
+21      37  368
+22      38  336
+23      40  592
+24      42  976
+25      45  336
+26      51  368
+27      53  640
+28      58  464
+29      64  416
+30      65  416
+31      80  400
+32      95  336
+33     103  336
+34     112  432
+'''
+
+
+clustering_data  %>% count(cluster) %>%
+  {. ->> geneCluster } 
+
+#each gene has 16 observations because of 8 Northern Sea observations (16 Northern Sea samples were merged) and 8 Baltic Sea observations;
+#therefore, these numbers must be divided by 16 to get the number of genes in each cluster
+
+geneCluster$n <- geneCluster$n/16
+
+#order by size to show only largest cluster profiles in the MS
+geneCluster <- geneCluster[order(geneCluster$n, decreasing=T),]
+
+#large clusters (here:more than 40 genes)
+geneCluster.large <- geneCluster[geneCluster$n >= 40,]
+clustering_data.large <- clustering_data[clustering_data$cluster %in% geneCluster.large$cluster,]
+
+#small clusters
+geneCluster.small <- geneCluster[geneCluster$n < 40,]
+clustering_data.small <- clustering_data[clustering_data$cluster %in% geneCluster.small$cluster,]
+
+
+#define labels 
+label_facet(geneCluster$cluster, geneCluster$n)
+
+#large clusters
+pdf('heatstress_cluster_in_timeseries_with_discrete_trendline_both_regions_large.pdf')
+ggplot(clustering_data.large,
+       aes(Year, value, color = Marine_region)) +
+  #geom_point(position = position_jitterdodge(dodge.width = 0.9)) +
+  geom_boxplot(aes(Year, value)) +
+  scale_color_manual(name = "Marine region", labels = c("Baltic Sea", "North Sea"), values = c('#4B006E', 'darkorange')) +
+  labs(y= "z-score of expression", x = "") +
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  stat_summary(aes(x=as.numeric(Year), color= Marine_region), fun=median, geom='line', linewidth=.8) +
+  facet_wrap(vars(cluster), ncol = 4,
+             labeller = labeller(cluster = label_facet(geneCluster.large$cluster, geneCluster.large$n)))
+dev.off()
+
+
+geneCluster.small <- geneCluster[geneCluster$n < 40,]
+clustering_data.small <- clustering_data[clustering_data$cluster %in% geneCluster.small$cluster,]
+
+#small clusters
+pdf('heatstress_cluster_in_timeseries_with_discrete_trendline_both_regions_small.pdf')
+ggplot(clustering_data.small,
+       aes(Year, value, color = Marine_region)) +
+  #geom_point(position = position_jitterdodge(dodge.width = 0.9)) +
+  geom_boxplot(aes(Year, value)) +
+  scale_color_manual(name = "Marine region", labels = c("Baltic Sea", "North Sea"), values = c('#4B006E', 'darkorange')) +
+  labs(y= "z-score of expression", x = "") +
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  stat_summary(aes(x=as.numeric(Year), color= Marine_region), fun=median, geom='line', linewidth=.8) +
+  facet_wrap(vars(cluster), ncol = 4,
+             labeller = labeller(cluster = label_facet(geneCluster.small$cluster, geneCluster.small$n)))
+dev.off()
+
+
+#####################################
+#2. test for the effect of time and location at the whole-transcriptome level
+#####################################
 
 #### add SVs to DESeq2 model
 ddssva <- dds1
@@ -198,11 +325,6 @@ low counts [2]     : 1164, 5.8%
 #apply effect size shrinkage
 res.MelvsDar.apeglm <- lfcShrink(dds=ddsClean2, type="apeglm", coef=6, res = res.MelvsDar) 
 write.csv(as.data.frame(res.MelvsDar.apeglm), file= "DEG_zoarces_MelvsDar_apeglm.csv")
-
-
-
-
-
 
 
 ####clustering of time responsive genes according to their expression behaviour 
@@ -301,7 +423,10 @@ unique(clustering_data[clustering_data$cluster == 7, ]$genes)
 
 
 
-####functional enrichment with topGO
+#####################################
+#functional enrichment with topGO
+#####################################
+
 library(tidyr)
 library(GO.db)
 library(topGO)
@@ -437,118 +562,3 @@ sigGenes(GOdata_up)
 sigGenes(GOdata_up)[sigGenes(GOdata_up)  %in% unlist(unname(genesInTerm(GOdata_up, selected[1])))] ##the order matters here
 #g10588, g11539, g14465, g16053, g17213, g6376 are solute carriers
 
-
-##############################################
-
-####check, how the heat responsive genes behave in the timeseries data
-#load the data
-heatstress <- read.csv('../../eelpout_RNA_heatstress_experiment/DESeq/DEG_zoarces_heatstress_exp.csv', row.names = 1)
-
-heatstress$padj[is.na(heatstress$padj)] <- 1
-heatstress <- heatstress[heatstress$padj < 0.05,]
-heatstress <- row.names(heatstress)
-
-heatstress <- intersect(heatstress, row.names(data_adj)) ##2440 genes
-vsd_heatstress <- data_adj[heatstress,]
-
-#preliminary clustering
-pdf('heatstress_clusters_in_timeseries_data.pdf')
-cluster <- degPatterns(vsd_heatstress, sampleData, time = "Year", col = 'Marine_region', minc = 20)
-dev.off()
-
-#get the data                                      
-clustering_data <- cluster[["normalized"]]
-clustering_data  %>% count(cluster) 
-
-'''
-   cluster    n
-1        2  464
-2        3 1744
-3        4 1120
-4        5 2176
-5        6  464
-6        9 1392
-7       10  640
-8       11 1792
-9       12  384
-10      15 1216
-11      19  368
-12      20  688
-13      22  672
-14      23  512
-15      24  384
-16      25  784
-17      26 1088
-18      29  576
-19      31  336
-20      32  784
-21      37  368
-22      38  336
-23      40  592
-24      42  976
-25      45  336
-26      51  368
-27      53  640
-28      58  464
-29      64  416
-30      65  416
-31      80  400
-32      95  336
-33     103  336
-34     112  432
-'''
-
-
-clustering_data  %>% count(cluster) %>%
-  {. ->> geneCluster } 
-
-geneCluster$n <- geneCluster$n/16
-
-#order by size to show only largest cluster profiles in the MS
-geneCluster <- geneCluster[order(geneCluster$n, decreasing=T),]
-
-#large clusters (here:more than 40 genes)
-geneCluster.large <- geneCluster[geneCluster$n >= 40,]
-clustering_data.large <- clustering_data[clustering_data$cluster %in% geneCluster.large$cluster,]
-
-#small clusters
-geneCluster.small <- geneCluster[geneCluster$n < 40,]
-clustering_data.small <- clustering_data[clustering_data$cluster %in% geneCluster.small$cluster,]
-
-
-#define labels 
-label_facet(geneCluster$cluster, geneCluster$n)
-
-#large clusters
-pdf('heatstress_cluster_in_timeseries_with_discrete_trendline_both_regions_large.pdf')
-ggplot(clustering_data.large,
-       aes(Year, value, color = Marine_region)) +
-  #geom_point(position = position_jitterdodge(dodge.width = 0.9)) +
-  geom_boxplot(aes(Year, value)) +
-  scale_color_manual(name = "Marine region", labels = c("Baltic Sea", "North Sea"), values = c('#4B006E', 'darkorange')) +
-  labs(y= "z-score of expression", x = "") +
-  theme_bw()+
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
-  stat_summary(aes(x=as.numeric(Year), color= Marine_region), fun=median, geom='line', linewidth=.8) +
-  facet_wrap(vars(cluster), ncol = 4,
-             labeller = labeller(cluster = label_facet(geneCluster.large$cluster, geneCluster.large$n)))
-dev.off()
-
-
-geneCluster.small <- geneCluster[geneCluster$n < 40,]
-clustering_data.small <- clustering_data[clustering_data$cluster %in% geneCluster.small$cluster,]
-
-#small clusters
-pdf('heatstress_cluster_in_timeseries_with_discrete_trendline_both_regions_small.pdf')
-ggplot(clustering_data.small,
-       aes(Year, value, color = Marine_region)) +
-  #geom_point(position = position_jitterdodge(dodge.width = 0.9)) +
-  geom_boxplot(aes(Year, value)) +
-  scale_color_manual(name = "Marine region", labels = c("Baltic Sea", "North Sea"), values = c('#4B006E', 'darkorange')) +
-  labs(y= "z-score of expression", x = "") +
-  theme_bw()+
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
-  stat_summary(aes(x=as.numeric(Year), color= Marine_region), fun=median, geom='line', linewidth=.8) +
-  facet_wrap(vars(cluster), ncol = 4,
-             labeller = labeller(cluster = label_facet(geneCluster.small$cluster, geneCluster.small$n)))
-dev.off()
