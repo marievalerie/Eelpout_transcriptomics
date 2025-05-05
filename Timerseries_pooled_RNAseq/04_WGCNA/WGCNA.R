@@ -1,4 +1,3 @@
-###WGCNA
 library("DESeq2")
 library('sva')
 library('WGCNA')  
@@ -7,6 +6,13 @@ library('readr')
 library('PCAtools')
 library('tidyr')
 library('stringr')
+
+
+
+###########################
+#WGCNA
+###########################
+
 
 #perform the WGCNA based on dcount data that is batch effect adjusted, if one exist i.e., SVA corrected and variance stabilized counts
 #accordign to https://support.bioconductor.org/p/42615/ a frozen sva wiould to the job
@@ -85,7 +91,7 @@ head(mat)
 
 ####WGCNA
 #outlier genes and samples need to be removed -> different ways to identify these
-#identify outlier genes with WGCAN function
+#identify outlier genes with WGCNA function
 
 #rows must be samples and cols must be genes
 mat <- t(mat)
@@ -200,57 +206,8 @@ MEs <- MElist$eigengenes
 head(MEs)
 
 
-####################################
-
-####module clustering based on eigengene similarity
-#first: define distance between eigengenes
-ME.dissimilarity = 1-cor(MEs)
-
-METree = hclust(as.dist(ME.dissimilarity), method = "average") #Clustering eigengenes 
-par(mar = c(0,4,2,0)) #seting margin sizes
-par(cex = 0.6);#scaling the graphic
-png('eigengen_clustering.png')
-plot(METree)
-abline(h=.2, col = "red") #a height of .25 corresponds to correlation of .75
-dev.off()
-
-
-##merge everything with < 0.2 dissimilarity
-merge <- mergeCloseModules(mat, ModuleColors, cutHeight = .2)
-# The merged module colors, assigning one color to each module
-mergedColors = merge$colors
-# Eigengenes of the new merged modules
-mergedMEs = merge$newMEs
-
-###compare merged vs unmerged modules
-png("Dendrogram.png")
-plotDendroAndColors(geneTree, cbind(ModuleColors, mergedColors), 
-                    c("Original Module", "Merged Module"),
-                    dendroLabels = FALSE, hang = 0.03,
-                    addGuide = TRUE, guideHang = 0.05,
-                    main = "Gene dendrogram and module colors for original and merged modules")
-dev.off()
-
-
-###plot how many genes per merged module
-png("NumberOfGenesPerModule_merged.png")
-barplot(table(mergedColors), las=2,cex.names = 0.8, main = "Number of genes per module after merging")
-dev.off()
-
-###plot how many genes per unmerged module
-png("NumberOfGenesPerModule_unmerged.png")
-barplot(table(ModuleColors), las=2,cex.names = 0.8, main = "Number of genes per module without merging")
-dev.off()
-
-###leave it unmerged since module merging does not really change anything
-###################
-
-
-
-
-
-####correlation between module eigengenes and external traits
-#biometric parameters i.e., average weight & body length & environmental data
+####correlate Eigengenes with external traits:
+#biometric parameters (average weight & body length) & environmental data
 
 #check if the biometric data are normally distributed
 setwd('C:/Users/mbras/Desktop/UPB - poolseq time line/')
@@ -261,7 +218,6 @@ qqnorm(biometrics$Aalmutter.Gewicht.DAR)
 qqline(biometrics$Aalmutter.Gewicht.DAR)
 #test formally
 shapiro.test(biometrics$Aalmutter.Gesamtlänge.DAR)
-
 
 #plot with ggplot
 library('ggplot2')
@@ -320,9 +276,7 @@ grid.arrange(p1, p2, p3, p0, ncol=2)
 dev.off()
 
 
-
-
-####environmental data
+#environmental data
 
 p4 <- ggplot(biometrics.long[biometrics.long$biometric == 'EXACT_predicted_water_temp_at_sea_floor', ], aes(x=Year, y=value )) +
   geom_line(aes(color = Sampling_site), show.legend = T) +
@@ -471,7 +425,7 @@ dev.off()
 cor <- temp_cor     # Return cor function to original namespace
 
 
-####plot expression profiles & eigengenes
+####plot eigengenes (i.e., average expression profiles of modules) 
 
 lvls =  c( "Dar_94", "Dar_99", "Dar_05", "Dar_10", "Dar_12", "Dar_17", "Dar_19", "Dar_21",
            "Mel_94", "Mel_99", "Mel_05", "Mel_10", "Mel_12", "Mel_17", "Mel_19", "Mel_21", 
@@ -495,267 +449,26 @@ ggplot(ME.plot.long, aes(x=name, y=expression, group=module)) +
 dev.off()
 
 
+####find overlaps between the different data sets with circlize chord diagram
 
+#create the gene lists
 
-
-
-
-
-
-
-
-
-
-
-
-#all MEs that had a sig. correlation to any of the tested traits
-ME.sub <- MEs[, -c(9,10,18,20)] ##removal of grey, grey60, red, salmon
-ME.sub$name <- factor(row.names(ME.sub), levels = lvls)
-
-
-##transform to long format with tidyr
-ME.sub.long <- gather(ME.sub, module, expression, MEblack:MEyellow)
-
-pdf('MEs_expression_profiles_all_with_corr.pdf')
-ggplot(ME.sub.long, aes(x=name, y=expression, group=module)) +
-  geom_line(aes(color = module), show.legend = FALSE) +
-  scale_color_manual(values = str_remove(colnames(ME.sub), 'ME')) +
-  theme_light() +
-  theme(text = element_text(size = 7.5), axis.text.x = element_text(angle = 90, hjust = 0.5, vjust = 0.5)) +
-  facet_wrap(~ module, ncol= 3) +
-  labs(x = NULL,
-       y = "Eigengene expression")
-dev.off()
-
-
-
-###pick out all MEs with significant env correlation 
-
-modules.env <- row.names(module.trait.correlation.env)
-
-ME.env <- as.data.frame(MEs[, modules.env])
-ME.env$name <- row.names(ME.env)
-ME.env$name <- factor(ME.env$name, levels = lvls)
-
-
-##transform to long format with tidyr
-ME.env.long <- gather(ME.env, module, expression, MEblue:MEyellow)
-
-pdf('MEs_env_expression_profiles.pdf')
-ggplot(ME.env.long, aes(x=name, y=expression, group=module)) +
-  geom_line(aes(color = module), show.legend = FALSE) +
-  scale_color_manual(values = str_remove(modules.env, 'ME')) +
-  theme_bw() +
-  theme(
-    axis.text.x = element_text(angle = 90)
-  ) +
-  facet_grid(rows = vars(module)) +
-  labs(x = "Sample",
-       y = "Eigengene expression")
-dev.off()
-
-
-###biometric modules
-modules.biom <- row.names(module.trait.correlation.biom)
-
-ME.biom <- as.data.frame(MEs[, modules.biom])
-
-ME.biom$name <- row.names(ME.biom)
-ME.biom$name <- factor(ME.biom$name, levels = lvls)
-
-
-##transform to long format
-ME.biom.long <- gather(ME.biom, module, expression, MEblack:MEturquoise)
-
-pdf('MEs_biom_expression_profiles.pdf')
-ggplot(ME.biom.long, aes(x=name, y=expression, group=module)) +
-  geom_line(aes(color = module), show.legend = FALSE) +
-  scale_color_manual(values = str_remove(modules.biom, 'ME')) +
-  theme_bw() +
-  theme(
-    axis.text.x = element_text(angle = 90)
-  ) +
-  facet_grid(rows = vars(module)) +
-  labs(x = "Sample",
-       y = "Eigengene expression")
-dev.off()
-
-
-
-
-#####################################
-#individual genes
-#modGenes = (ModuleColors==module)
-modGenes=mat[,ModuleColors==module] ##this is the normalized expression of the genes in the blue module
-#dimensions are samples x genes
-
-
-module_df <- data.frame(
-  gene_id = colnames(modGenes),
-  colors = module
-)
-
-
-# Pull out list of genes in that module
-library(dplyr)
-
-submod_df = data.frame(t(modGenes)) %>%
-  mutate(
-    gene_id = row.names(.)
-  ) %>%
-  pivot_longer(-gene_id) %>%
-  mutate(
-    colors = module
-  )
-
-##check if this is right
-png('test.png')
-ggplot(submod_df, aes(x=factor(name, levels = lvls), y=scale(value, scale = TRUE), group=gene_id)) +
-  geom_line(aes(color = colors),
-            alpha = 0.05) +
-  theme_bw() +
-  theme(
-    axis.text.x = element_text(angle = 90)
-  ) +
-#  facet_grid(rows = vars(module)) +
-  labs(x = "sample",
-       y = "normalized expression")
-dev.off()
-
-
-
-################################
-
-
-##plot the module MEs which are significantly correlated with both, biometric data and temperature vars
-
-##all in env except yellow
-modules.both <- row.names(module.trait.correlation.env)[1:5]
-
-
-ME.both <- as.data.frame(MEs[, modules.both])
-ME.both$name <- row.names(ME.both)
-ME.both$name <- factor(ME.both$name, levels = lvls)
-
-
-##transform to long format with tidyr
-ME.both.long <- gather(ME.both, module, expression, MEblue:MEturquoise)
-
-colors.both <- gsub('MEgreen', 'MEdarkgreen', modules.both)
-colors.both <- str_remove(colors.both, 'ME')
-
-module_names <- c(
-  `MEblue` = "Blue module",
-  `MEgreen` = "Green module",
-  `MElightgreen` = "Lightgreen module",
-  `MEmidnightblue` = "Midnightblue module",
-  `MEturquoise` = "Turquoise module"
-)
-
-
-pdf('MEs_both_vars_expression_profiles.pdf')
-ggplot(ME.both.long, aes(x=name, y=expression, group=module)) +
-  geom_line(aes(color = module), show.legend = FALSE) +
-  scale_color_manual(values = colors.both) +
-  theme_bw() +
-  theme(
-    axis.text.x = element_text(angle = 90)
-  ) +
-  facet_grid(rows = vars(module),labeller = as_labeller(module_names)) +
-  labs(x = "Sample",
-       y = "Eigengene expression")
-dev.off()
-
-
-####plot correlation of eigengene expression and traits
-
-##env data is in envTraits
-##biometric data is in biometricTraits
-
-#row.names(ME.both) == row.names(envTraits) TRUE
-#row.names(ME.both) == row.names(biometricTraits) TRUE
-
-##select only one  trait with the highest correlation on average;
-
-#min. annual temp.
-ME.both$min_temp <- envTraits$MIN_predicted_water_temp_at_sea_floor
-
-#average body length
-ME.both$length <- biometricTraits$Average_body_length
-
-ME.both.long <- gather(ME.both, module, expression, MEblue:MEturquoise)
-
-pdf('Corr_MEexpression_min_temp.pdf')
-ggplot(ME.both.long, aes(x=min_temp, y=expression, label= name)) +
-  geom_point(aes(color = module), show.legend = FALSE) +
-  geom_text(hjust=0, vjust=0) +
-  scale_color_manual(values =colors.both) +
-  theme_bw() +
-  theme(
-    axis.text.x = element_text(angle = 90)
-  ) +
-  facet_grid(rows = vars(module)) +
-  labs(x = "Min. temperature",
-       y = "Eigengene expression")
-dev.off()
-
-
-pdf('Corr_MEexpression_body_length.pdf')
-ggplot(ME.both.long, aes(x=length, y=expression, label= name)) +
-  geom_point(aes(color = module), show.legend = FALSE) +
-  geom_text(hjust=0, vjust=0) +
-  scale_color_manual(values =colors.both) +
-  theme_bw() +
-  theme(
-    axis.text.x = element_text(angle = 90)
-  ) +
-  facet_grid(rows = vars(module)) +
-  labs(x = "Average body length",
-       y = "Eigengene expression")
-dev.off()
-
-###plot temperature and body length
-
-png('body_length.png')
-ggplot(ME.both.long, aes(x=name, y=length)) +
-  geom_point()+
-  theme_bw() +
-  theme(axis.text.x = element_text(angle = 75))
-dev.off()
-
-
-png('min_temp.png')
-ggplot(ME.both.long, aes(x=name, y=min_temp)) +
-  geom_point()+
-  theme_bw() +
-  theme(axis.text.x = element_text(angle = 75))
-dev.off()
-
-
-
-
-##find overlaps between the different data sets
-
-##create all the gene lists
-
+#1. heat stress responsive genes
 heatstress <- read.csv('../../eelpout_RNA_heatstress_experiment/DESeq/DEG_zoarces_heatstress_exp.csv', row.names = 1)
-
 heatstress$padj[is.na(heatstress$padj)] <- 1
 heatstress <- heatstress[heatstress$padj < 0.05,]
 heatstress <- row.names(heatstress)
 
-
+#2. time responsive genes
 time.series <- read.csv('../DESeq/DEG_zoarces_timeseries_LRT.csv', row.names = 1)
-
 time.series$padj[is.na(time.series$padj)] <- 1
 time.series <- time.series[time.series$padj < 0.05,]
 time.series <- row.names(time.series)
 
-##modules
+#3. genes in WGCNA modules
 allModules <- names(table(ModuleColors))
 
-
-###first; check that no genes is (erroneously) in two modules
+#just to be sure: check that no genes is (erroneously) in two modules
 for (col in allModules){
   for (i in c(1:length(allModules))){
     geneset1 = colnames(mat[,ModuleColors==col])
@@ -767,9 +480,9 @@ for (col in allModules){
   }
 }
 
-######
-## initialize the dataframe; required format is:
-## | FROM | TO | VALUE
+####merge the gene lists
+#initialize the dataframe; required format is:
+#| FROM | TO | VALUE
 
 df = data.frame(
   FROM = c('heatstress'),
@@ -791,29 +504,22 @@ for (col in allModules){
 }
 
 
-
-
-#####now find the genes which are unique
+####nfind the genes which are unique
 all = c()
-
 for (col in allModules){
   all = c(all, colnames(mat[,ModuleColors==col]))
 }
 
-###20041 genes in these modules
 
-all.time = unique(c(all, time.series)) ##still 20041
-
+####20041 genes in the modules
+all.time = unique(c(all, time.series)) #still 20041
 setdiff(heatstress, all.time) #one gene is unique to heatstressm and not in all others
-
 all.heatstress = unique(c(all, heatstress)) #20042
-
 setdiff(time.series, all.heatstress) #time series completely included in all others
 
 df = rbind(df, list(FROM = 'heatstress', TO = 'heatstress', VALUE = length(setdiff(heatstress, all.time))))
 
-###unique ones from the modules!
-
+####unique genes from the WGCNA modules
 all.deseq = unique(c(heatstress, time.series))
 
 for (col in allModules){
@@ -823,21 +529,16 @@ for (col in allModules){
   df = rbind(df, new_row)
 }
 
-
-
-###this df can now be used for circlize chord diagram
+#this df can now be used for circlize chord diagram
 
 library(circlize)
-
 length(allModules) #23
 
 group <- structure(c(rep('DESeq2', each = 2),rep('WGCNA', each=23)), names =  c('heatstress', 'timeseries', allModules))
 
-#grid.col = c('blue', 'red',rep('grey', each=23))
 grid.col = c('#6F4D38', '#C2A77C', allModules)
 
-
-##for link color mapping
+#for link color mapping
 border <- rep(0, each = length(row.names(df)))
 
 idx.heatstress <- which(df$FROM == 'heatstress') 
@@ -847,111 +548,56 @@ border[idx.heatstress] <- '#6F4D38'
 border[idx.timeseries] <- '#C2A77C'
 
 circos.par(start.degree = -77)
-pdf('circos_plot_intersection_and_unique_genes_scaled.pdf')
+pdf('circos_plot_intersection_and_unique_genes.pdf')
 chordDiagram(df,group = group, grid.col= grid.col, col='grey', transparency = 0.5, 
              link.border = border,
              link.zindex = rev(c(1:length(row.names(df)))),
              #self.link = 2, 
-             scale = TRUE,
+             #scale = TRUE,
              annotationTrack = "grid", big.gap=15)
 dev.off()
 circos.clear()
 
 
 
+###########################
+#Functional enrichment
+###########################
 
-############now plot only the intersections
-df = data.frame(
-  FROM = c('heatstress'),
-  TO = c('timeseries'),
-  VALUE = length(intersect(heatstress, time.series)))
-
-
-for (col in allModules){
-  #find intersection between heatstress and modules
-  geneset_temp = colnames(mat[,ModuleColors==col])
-  intersection = intersect(heatstress, geneset_temp)
-  new_row = list(FROM = 'heatstress', TO = col, VALUE = length(intersection))
-  df = rbind(df, new_row)
-  
-  #find intersection between timeseries and modules
-  intersection = intersect(time.series, geneset_temp)
-  new_row = list(FROM='timeseries', TO= col, VALUE = length(intersection))
-  df = rbind(df, new_row)
-}
-
-
-grid.col = c('#6F4D38', '#C2A77C', allModules)
-#grid.col = c('#C2A77C', '#C2A77C', allModules)
-
-col_fun = colorRamp2(range(df$VALUE), c("#C0C0C0", "#708090"), transparency = 0.5)
-
-circos.par(start.degree = -12)
-pdf('circos_plot_only_intersections.pdf')
-chordDiagram(df,group = group, grid.col= grid.col, col=col_fun, transparency = 0.5, 
-             #link.border = c(rep('orange', each= 48), rep(0, each= 23)),
-             #link.zindex = rank(df[[3]]),
-             #self.link = 2, scale = TRUE,
-             annotationTrack = "grid", 
-             big.gap=15)
-dev.off()
-circos.clear()
-
-
-
-###functional enrichment 
-'''
-test the genes in the following modules against the whole timeseries transcriptome:
-blue
-green
-lightgreen
-midnightblue
-turquoise
-yellow
-'''
-
-
-#################functional enrichment:
 library(tidyr)
 library(GO.db)
 library(topGO)
 
+
+####test the genes in the two main modules blue and turquoise against the whole timeseries transcriptome:
+
 setwd('../functional annotation')
 
-#######if gene2go is already prepared
-##check that no invisible line breaks are in the file ;open the file one time a just save it
-#transform to longformat
+#if gene2go is already prepared
+#check that no invisible line breaks are in the file
+
 GO_ids = read.csv('StringtieEggNog_Gene2GO.csv', sep=';', header = F)
 
-
+#transform to longformat
 long_GO <- gather(GO_ids, Gen, IDs, V2:V1160)
 
-
-# take out genes without GO terms
+#take out genes without GO terms
 long_GO <- long_GO[which(long_GO$`IDs` != ""),] 
 
-##remove variable column
+#remove variable column
 long_GO <- long_GO[, c(1, 3)]
 
 #sort by transcript/gene
 gene.go <- long_GO[order(long_GO$V1), ]
 
-# Create list with element for each gene, containing vectors with all terms for each gene
+#create list with element for each gene, containing vectors with all terms for each gene
 gene2GO <- tapply(gene.go$`IDs`, gene.go$V1, function(x)x)
 
 head(gene2GO) #go IDs as strings
 
 background <- colnames(mat)
 
-'''
-blue
-green
-lightgreen
-midnightblue
-turquoise
-yellow
-'''
-
+#col= 'turquoise'
 col='blue'
 
 
@@ -961,15 +607,15 @@ NOTgene_list <- setdiff(background, geneList) ##this must get the zeros
 temp <- c(rep(1, each = length(geneList)), rep(0, each = length(NOTgene_list)))
 names(temp) <- c(geneList, NOTgene_list)
 
-##Create topGOdata object:
-
+                  
+#Create topGOdata object; rerun this code if you want to explore different ontologies
 GOdata <- new("topGOdata",
                    ontology = "BP",  #ontology criteria = biological process
                    allGenes = temp, #gene universe because all genes are present in the list; here only the ones with read abundance threshold are included because DESeq only worked with them
                    geneSelectionFun = function(x)(x == 1), ##function allows to use the genes which are de for treatment
                    annot = annFUN.gene2GO, gene2GO = gene2GO) #gene ID-to-GO terms
 
-##run enrichment test: here Fishers Exact Test
+#run enrichment test: here Fishers Exact Test and explore how the algorithms perform differently to decorrelate the GO graph structure
 resultFisher.elim <- runTest(GOdata, algorithm = "elim", statistic = "fisher")
 resultFisher.weight01 <- runTest(GOdata, algorithm = "weight01", statistic = "fisher")
 
@@ -977,113 +623,7 @@ resultFisher.weight01 <- runTest(GOdata, algorithm = "weight01", statistic = "fi
 GOtable <- GenTable(GOdata, p.value.elim = resultFisher.elim, p.value.weight01 = resultFisher.weight01, topNodes = length(resultFisher.weight01@score), numChar = 10000000)
 
 write.csv(GOtable, file = paste(col, '_WGCNA_module_BP_enrichment_fisher.csv', sep = ''))
-
 #write.csv(GOtable, file = paste(col, '_WGCNA_module_MF_enrichment_fisher.csv', sep = ''))
 
-
-
-
-
-
-
-
-
-
-
-
-
-############visualization
-
-##module blue
-
-ggdata <- read.csv("/Users/mariebrasseur/Desktop/trier/WGCNA/functional enrichment/blue_WGCNA_module_BP_enrichment_fisher.csv", sep = ';', row.names = 1)
-ggdata <- down[1:ntop,]
-ggdata$Term <- factor(ggdata$Term, levels = rev(ggdata$Term)) # fixes order
-ggdata$weight01 <- as.numeric(ggdata$weight01)
-
-pdf(file= 'GOenrichment_pesticide_under_bi_downregulated_BP_top15.pdf', height = 9, width = 14)
-gg1 <- ggplot(ggdata, aes(x = Term, y = Significant, size = Significant/Expected, fill = -log10(weight01))) +
-  expand_limits(y = 7) +
-  geom_point(shape = 21) +  #shape = 21 allows to fill with other color
-  scale_size(range = c(1,10)) +#, breaks = c(1, 4, 10)) +
-  scale_fill_continuous(low = 'yellow', high = 'darkblue') +
-  guides(size=guide_legend("Enrichment ratio"))+ 
-  
-  xlab('') + ylab('Annotated genes') + 
-  labs(
-    title = 'Insecticide effect L. basale -\ndownregulated genes under biotic interaction',
-    subtitle = 'Top 15 Biological Process terms')+
-  
-  theme_bw(base_size = 28) +
-  theme(
-    legend.position = 'right',
-    legend.background = element_rect(),
-    plot.title = element_text(angle = 0, size = 19, face = 'bold', vjust = 1),
-    plot.subtitle = element_text(angle = 0, size = 15, face = 'bold', vjust = 1),
-    
-    axis.text.x = element_text(angle = 0, size = 15, face = 'bold', hjust = 1.10),
-    axis.text.y = element_text(angle = 0, size = 15, face = 'bold', vjust = 0.5),
-    axis.title = element_text(size = 15, face = 'bold'),
-    axis.title.x = element_text(size = 15, face = 'bold'),
-    axis.title.y = element_text(size = 15, face = 'bold'),
-    axis.line = element_line(colour = 'black'),
-    
-    #Legend
-    legend.key = element_blank(), #removes the border
-    legend.key.size = unit(1, "cm"), #Sets overall area/size of the legend
-    legend.text = element_text(size = 19, face = "bold"), # Text size
-    title = element_text(size = 19, face = "bold")) +
-  
-  #change legend title
-  labs(fill = '-log10(p-value)') +
-  
-  coord_flip()
-gg1
-dev.off()
-
-
-#upregulated genes
-ggdata <- up[1:ntop,]
-ggdata$Term <- factor(ggdata$Term, levels = rev(ggdata$Term)) # fixes order
-ggdata$weight01 <- as.numeric(ggdata$weight01)
-
-pdf(file= 'GOenrichment_pesticide_under_bi_upregulated_BP_top15.pdf',  height = 9, width = 14)
-gg1 <- ggplot(ggdata,
-              aes(x = Term, y = Significant, size = Significant/Expected, fill = -log10(weight01))) +
-  expand_limits(y = 7) +
-  geom_point(shape = 21) +  #shape = 21 allows to fill with other color
-  scale_size(range = c(1,10)) +#, breaks = c(1, 4, 10)) +
-  scale_fill_continuous(low = 'yellow', high = 'darkred') +
-  guides(size=guide_legend("Enrichment ratio"))+ 
-  
-  xlab('') + ylab('Annotated genes') + 
-  labs(
-    title = 'Insecticide effect L. basale -\nupregulated genes under biotic interaction',
-    subtitle = 'Top 15 Biological Process terms')+
-  
-  theme_bw(base_size = 28) +
-  theme(
-    legend.position = 'right',
-    legend.background = element_rect(),
-    plot.title = element_text(angle = 0, size = 19, face = 'bold', vjust = 1),
-    plot.subtitle = element_text(angle = 0, size = 15, face = 'bold', vjust = 1),
-    
-    axis.text.x = element_text(angle = 0, size = 15, face = 'bold', hjust = 1.10),
-    axis.text.y = element_text(angle = 0, size = 15, face = 'bold', vjust = 0.5),
-    axis.title = element_text(size = 15, face = 'bold'),
-    axis.title.x = element_text(size = 15, face = 'bold'),
-    axis.title.y = element_text(size = 15, face = 'bold'),
-    axis.line = element_line(colour = 'black'),
-    
-    #Legend
-    legend.key = element_blank(), # removes the border
-    legend.key.size = unit(1, "cm"), # Sets overall area/size of the legend
-    legend.text = element_text(size = 19, face = "bold"), # Text size
-    title = element_text(size = 19, face = "bold")) +
-  
-  #change legend title
-  labs(fill = '-log10(p-value)') +
-  
-  coord_flip()
 gg1
 dev.off()
