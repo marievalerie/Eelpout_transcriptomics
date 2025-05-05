@@ -3,9 +3,6 @@ configfile: "config.yaml"
 
 rule all:
     input:
-        #expand("../trimmed/{sample}_1_polyx_trimmed_val_1.fq", sample=config["samples"])
-        #expand("genome_guided_transcripts/{sample}.gtf", sample=config["samples"])        
-        #expand("../genome_guided_expression/{sample}.tsv", sample=config["samples"]),
         expand("../genome_guided_expression_gff_as_ref/{sample}/{sample}.tsv", sample=config["samples"])
         #"genome_guided_expression/gene_count_matrix.csv"
 
@@ -169,13 +166,6 @@ rule stringtie_expression_2:
     shell:
         "stringtie --fr -e -o {output} -p {threads} -G {input.reference} {input.reads}"
         
-#rule prepDE: 
-#    input:
-#        "genome_guided_expression/samples_lst.txt"
-#    output:
-#        "genome_guided_expression/gene_count_matrix.csv"
-#    shell:
-#        "prepDE.py -i {input} -l 150"
 
 rule stringtie_ballgown:
     input:
