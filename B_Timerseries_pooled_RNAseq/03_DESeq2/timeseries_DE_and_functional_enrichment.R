@@ -30,7 +30,10 @@ files_names <- c(files$V1)
 files <- c(files$V2)
 names(files) <- files_names
 
-tx2gene <- read.table('/share/pool/mbrasseur/eelpout_RNA_timeseries/reference/zoarces_tx2gene')
+#create tx2gene file
+a <- read_tsv(files[1]) 
+tx2gene <- a[, c("t_name", "gene_id")]
+tx2gene <- tx2gene[tx2gene$gene_id != ".",] 
 
 #read in tx abundances; for timeseries -> 150 bp
 txi.stringtie <- tximport(files, type = "stringtie", tx2gene = tx2gene, readLength = 150)
