@@ -1,0 +1,189 @@
+#Snakefile
+configfile: "config.yaml"
+
+rule all:
+    input:
+        #expand("../trimmed/{sample}_1_polyx_trimmed_val_1.fq", sample=config["samples"])
+        #expand("genome_guided_transcripts/{sample}.gtf", sample=config["samples"])        
+        #expand("../genome_guided_expression/{sample}.tsv", sample=config["samples"]),
+        expand("../genome_guided_expression_gff_as_ref/{sample}/{sample}.tsv", sample=config["samples"])
+        #"genome_guided_expression/gene_count_matrix.csv"
+
+
+rule unzip_fwd:
+    input:
+        "../raw_data/{sample}_R1_001.fastq.gz"
+    output:
+        temp("../trimmed/{sample}_R1_001.fastq")
+    shell:
+        "gunzip -c {input} > {output}"
+
+rule unzip_rev:
+    input:
+        "../raw_data/{sample}_R2_001.fastq.gz"
+    output:
+        temp("../trimmed/{sample}_R2_001.fastq")
+    shell:
+        "gunzip -c {input} > {output}"
+        
+rule trim_poly_X:
+    input:
+        fwd = "../trimmed/{sample}_R1_001.fastq",
+        rev = "../trimmed/{sample}_R2_001.fastq"
+    output:
+        trmd1 = temp("../trimmed/{sample}_1_polyx_trimmed.fastq"),
+        trmd2 = temp("../trimmed/{sample}_2_polyx_trimmed.fastq"),
+        single1 = temp("../trimmed/{sample}_1_singletons.fastq"),
+        single2 = temp("../trimmed/{sample}_2_singletons.fastq")
+    shell:
+        "/home/mbrasseur/bin/fastx-trim-filter-polyX-v0.3-dist/fastx-trim-filter-polyX-v0.3 --remove_mono_repeat_reads 0 --in1 {input.fwd} --in2 {input.rev} --out1 {output.trmd1} --out2 {output.trmd2} --single_out1 {output.single1} --single_out2 {output.single2} --symbol_list 'GCTA' -m 25 -s 20 -t 10"
+
+rule TrimGalore:
+    input:
+        "../trimmed/{sample}_1_polyx_trimmed.fastq",
+        "../trimmed/{sample}_2_polyx_trimmed.fastq"
+    output:
+        "../trimmed/{sample}_1_polyx_trimmed_val_1.fq",
+        "../trimmed/{sample}_2_polyx_trimmed_val_2.fq"
+    threads:
+        4
+    shell:
+        "perl ~/bin/TrimGalore-0.6.6/trim_galore --paired --quality 20 --phred33 --length 25 -j {threads} --stringency 1 --output_dir ../trimmed/ {input}"
+
+##indexing ##
+
+rule extract_splicesites:
+    input:
+        "../reference/Zoavi_1_2_softmasked_nuc+Mit2.gtf"
+    output:
+        "../reference/zoavi.ss"
+    shell:
+        "hisat2_extract_splice_sites.py {input} > {output}"
+
+rule extract_exons:
+    input:
+        "../reference/Zoavi_1_2_softmasked_nuc+Mit2.gtf"
+    output:
+        "../reference/zoavi.exons"
+    shell:
+        "hisat2_extract_exons.py {input} > {output}"
+
+rule indexing:
+    input:
+        exon = "../reference/zoavi.exons",
+        ss = "../reference/zoavi.ss",
+        genome = "../reference/Zoavi_1_2_fin_softmasked_genome.fasta"
+    output:
+        "../reference/zoavi_idx.1.ht2"
+    threads:
+        10
+    shell:
+        "hisat2-build --exon {input.exon} --ss {input.ss} {input.genome} ../reference/zoavi_idx -p {threads}"
+
+rule read_mapping_stranded:
+    input:
+        fwd = "../trimmed/{sample}_1_polyx_trimmed_val_1.fq",
+        rev = "../trimmed/{sample}_2_polyx_trimmed_val_2.fq",
+        idx = "../reference/zoavi_idx.1.ht2"
+    output:
+        samfile = temp("mapping_results/{sample}.sam"),
+        aligned_reads_fwd = temp("mapping_results/{sample}_aligned_reads.1.fq"),
+        aligned_reads_rev = temp("mapping_results/{sample}_aligned_reads.2.fq"),
+        summary = "mapping_results/{sample}_stranded_mapping_summary.txt",
+        metric = "mapping_results/{sample}_stranded_mapping_metrics.txt"
+    threads:
+        10
+    shell:
+        "hisat2 -x ../reference/zoavi_idx -p {threads} --max-intronlen 200000 --rna-strandness RF --dta -S {output.samfile} --met-file {output.metric} --summary-file {output.summary} --al-conc mapping_results/{wildcards.sample}_aligned_reads.fq -1 {input.fwd} -2 {input.rev}" 
+
+rule gzip_aligned_reads_fwd:
+    input:
+        "mapping_results/{sample}_aligned_reads.1.fq"
+    output:
+        "mapping_results/{sample}_aligned_reads.1.fq.gz"
+    shell:
+        "gzip {input}"
+
+rule gzip_aligned_reads_rev:
+    input:
+        "mapping_results/{sample}_aligned_reads.2.fq"
+    output:
+        "mapping_results/{sample}_aligned_reads.2.fq.gz"
+    shell:
+        "gzip {input}"
+
+rule sort_samtobam:
+    input:
+        "mapping_results/{sample}.sam"
+    output:
+        "mapping_results/{sample}_sorted.bam"
+    threads:
+        10
+    shell:
+        "samtools sort -m 10G -o {output} --threads {threads} {input}"
+
+
+##in case you want to include de novo assembly###
+rule stringtie_assembly:
+    input:
+        alignments = "mapping_results/{sample}_sorted.bam",
+        ref_annotation = "../reference/Zoavi_1_2_softmasked_nuc+Mit2.gff"
+    output:
+        "genome_guided_transcripts/{sample}.gtf"
+    threads:
+        10
+    shell:
+        "stringtie -o {output} -p {threads} -G {input.ref_annotation} --fr -A zoavi_gene_abundances.tab {input.alignments}"
+
+rule stringtie_merge: 
+    input:
+        expand("genome_guided_transcripts/{sample}.gtf", sample=config["samples"]) #returns a list with all transcript.gtf files
+    output:
+        "genome_guided_transcripts/all_transcripts_merged.gtf"
+    threads:
+        10    
+    shell:
+        "stringtie --fr -p {threads} -G ../reference/Zoavi_1_2_softmasked_nuc+Mit2.gff --merge {input} -o {output}"
+
+rule stringtie_expression_1:
+    input:
+        reads = "mapping_results/{sample}_sorted.bam",
+        reference = "genome_guided_transcripts/all_transcripts_merged.gtf"
+    output:
+        "../genome_guided_expression/{sample}.tsv"
+    threads:
+        10
+    shell:
+        "stringtie --fr -e -o {output} -p {threads} -G {input.reference} {input.reads}"
+
+
+###or go here if you only want to estiamte expression for the annotation that you have###
+rule stringtie_expression_2:
+    input:
+        reads = "mapping_results/{sample}_sorted.bam",
+        reference = "../reference/Zoavi_1_2_softmasked_nuc+Mit2.gff" ##this should be the annotation incl. the mitogenome features
+    output:
+        "../genome_guided_expression_gff_as_ref/{sample}.tsv"
+    threads:
+        10
+    shell:
+        "stringtie --fr -e -o {output} -p {threads} -G {input.reference} {input.reads}"
+        
+#rule prepDE: 
+#    input:
+#        "genome_guided_expression/samples_lst.txt"
+#    output:
+#        "genome_guided_expression/gene_count_matrix.csv"
+#    shell:
+#        "prepDE.py -i {input} -l 150"
+
+rule stringtie_ballgown:
+    input:
+        reads = "mapping_results/{sample}_sorted.bam",
+        reference = "../reference/Zoavi_1_2_softmasked_nuc+Mit2.gff" ##this should be the annotation incl. the mitogenome features
+    output:
+        "../genome_guided_expression_gff_as_ref/{sample}/{sample}.tsv"
+    threads:
+        10
+    shell:
+        "stringtie --fr -eB -o {output} -p {threads} -G {input.reference} {input.reads}" 
