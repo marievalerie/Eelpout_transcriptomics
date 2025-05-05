@@ -9,4 +9,4 @@
 
 module load fastqc/0.11.9
 
-fastqc --noextract -o ../raw_data/QC/ *.fq.gz 
+fastqc --noextract -o QC/ *.fq.gz 
