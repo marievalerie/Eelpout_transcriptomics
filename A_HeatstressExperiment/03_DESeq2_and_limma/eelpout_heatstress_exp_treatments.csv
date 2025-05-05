@@ -1,0 +1,13 @@
+﻿Sample;Tank;Library_name;Temperature_treatment;Treatment_numerical
+ L21;T7;959-1;control;12
+ L24;T7;959-2;control;12
+ L48.3;T14;959-3;control;12
+L7;T2;959-4;control;12
+ L54;T16;959-5;control;12
+ L55;T16;959-6;control;12
+ L11;T4;959-7;increased;18
+ L12;T4;959-8;increased;18
+ L32;T10;959-9;increased;18
+L17;T5;959-10;increased;18
+ L41;T13;959-11;increased;18
+ L43;T13;959-12;increased;18
