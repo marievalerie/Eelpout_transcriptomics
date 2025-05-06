@@ -2,7 +2,7 @@ library(ncdf4)
 library(lubridate)
 
 
-####################BALTIC SEA##########################
+#################### BALTIC SEA ##########################
 
 setwd('Trier/UPB - poolseq time line/copernicus_env_data/DarsserOrt')
 
@@ -109,7 +109,7 @@ write.table(df, 'temp_data_baltic_sea.csv', row.names=FALSE, sep=";")
 
 
 
-####################NORTH SEA##########################
+#################### NORTH SEA ##########################
 
 setwd('../NorthSea')
 
@@ -161,7 +161,6 @@ nc_close(nc_file)
 df_all<- rbind(df_all, nc_df)
 
 
-
 df <- df_all[, c(3,4)]
 
 
@@ -188,49 +187,3 @@ ggplot(df, aes(year, temp, color = year)) +
   geom_boxplot()
 
 write.table(df, 'temp_data_north_sea.csv', row.names=FALSE, sep=";")
-
-
-
-
-
-
-
-
-
-
-########################VALIDATION############################
-
-
-setwd('C:/Users/mbras/OneDrive/Desktop/Trier/environmental data bsh/validation_with_copernicus_data')
-
-files <- setdiff(list.files(), list.dirs(recursive = FALSE, full.names = FALSE))
-
-for (file in files){
-#file <- "2021_DarsserOrt.nc"
-nc_file <- nc_open(file)
-
-#the list values coule be also accessed by their position
-depth <- nc_file$dim[[1]]$vals 
-
-latitude <- nc_file$dim[["latitude"]]$vals
-longitude <- nc_file$dim[["longitude"]]$vals
-time <- nc_file$dim[["time"]]$vals
-
-
-##time is given as timestamp -> units as secs. since defined time point
-t_units <- ncatt_get(nc_file, "time", "units")
-
-##convert the time 
-t_ustr <- strsplit(t_units$value, " ")
-t_dstr <- strsplit(unlist(t_ustr)[3], "-")
-date <- ymd(t_dstr) + dseconds(time)
-
-##create csv
-coords <- as.matrix(expand.grid(longitude, latitude, date))
-temperature <- ncvar_get(nc_file, "thetao", collapse_degen=FALSE)
-
-nc_df <- data.frame(cbind(coords, temperature))
-names(nc_df) <- c("lon", "lat",  "time", "temp ")
-print(nc_df)
-nc_close(nc_file)
-}
